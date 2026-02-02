@@ -106,7 +106,7 @@ def lower_to_elementwise_interpreter(orig_mod : torch.nn.Module) -> torch.nn.Mod
     # Register output
     graph.output(output_node)
 
-    graph.lint(wrapper)
+    graph.lint()
 
     # Return final GraphModule!!!
     return torch.fx.GraphModule(wrapper, graph)
