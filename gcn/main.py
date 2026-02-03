@@ -236,10 +236,10 @@ if __name__ == '__main__':
     print('Downloading dataset...')
     with requests.get(cora_url, stream=True) as tgz_file:
         with tarfile.open(fileobj=tgz_file.raw, mode='r:gz') as tgz_object:
-            tgz_object.extractall()
+            tgz_object.extractall('/tmp')
 
     print('Loading dataset...')
-    features, labels, adj_mat = load_cora(device=device)
+    features, labels, adj_mat = load_cora(path='/tmp/cora', device=device)
     idx = torch.randperm(len(labels)).to(device)
     idx_test, idx_val, idx_train = idx[:1000], idx[1000:1500], idx[1500:]
 
