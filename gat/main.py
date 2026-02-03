@@ -328,7 +328,7 @@ if __name__ == '__main__':
 
     # Load the dataset
     cora_url = 'https://linqs-data.soe.ucsc.edu/public/lbc/cora.tgz'
-    path = './cora'
+    path = '/tmp/cora'
 
     if os.path.isfile(os.path.join(path, 'cora.content')) and os.path.isfile(os.path.join(path, 'cora.cites')):
         print('Dataset already downloaded...')
@@ -336,7 +336,7 @@ if __name__ == '__main__':
         print('Downloading dataset...')
         with requests.get(cora_url, stream=True) as tgz_file:
             with tarfile.open(fileobj=tgz_file.raw, mode='r:gz') as tgz_object:
-                tgz_object.extractall()
+                tgz_object.extractall('/tmp')
 
     print('Loading dataset...')
     # Load the dataset
