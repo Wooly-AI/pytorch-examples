@@ -15,8 +15,8 @@ class Net(nn.Module):
         super(Net, self).__init__()
         self.rnn = nn.LSTM(input_size=28, hidden_size=64, batch_first=True)
         self.batchnorm = nn.BatchNorm1d(64)
-        self.dropout1 = nn.Dropout2d(0.25)
-        self.dropout2 = nn.Dropout2d(0.5)
+        self.dropout1 = nn.Dropout(0.25)
+        self.dropout2 = nn.Dropout(0.5)
         self.fc1 = nn.Linear(64, 32)
         self.fc2 = nn.Linear(32, 10)
 
