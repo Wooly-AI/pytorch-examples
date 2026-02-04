@@ -19,7 +19,7 @@ def makedirs(name):
 
 
 def get_args():
-    parser = ArgumentParser(description='PyTorch/torchtext SNLI example')
+    parser = ArgumentParser(description='PyTorch SNLI example (spacy tokenization)')
     parser.add_argument('--epochs', type=int, default=50,
                         help='the number of total epochs to run.')
     parser.add_argument('--batch_size', type=int, default=128,
@@ -56,13 +56,8 @@ def get_args():
                         help='save path of results.')
     parser.add_argument('--vector_cache', type=str, default=os.path.join(os.getcwd(), '.vector_cache/input_vectors.pt'),
                         help='name of vector cache directory, which saved input word-vectors.')
-    parser.add_argument('--word_vectors', type=str, default='glove.6B.100d',
-                        help='one of or a list containing instantiations of the GloVe, CharNGram, or Vectors classes.'
-                        'Alternatively, one of or a list of available pretrained vectors: '
-                        'charngram.100d fasttext.en.300d fasttext.simple.300d'
-                        'glove.42B.300d glove.840B.300d glove.twitter.27B.25d'
-                        'glove.twitter.27B.50d glove.twitter.27B.100d glove.twitter.27B.200d'
-                        'glove.6B.50d glove.6B.100d glove.6B.200d glove.6B.300d')
+    parser.add_argument('--word_vectors', type=str, default='',
+                        help='path to pretrained word vectors file (e.g. GloVe); empty = train from scratch.')
     parser.add_argument('--resume_snapshot', type=str, default='',
                         help='model snapshot to resume.')
     parser.add_argument('--dry-run', action='store_true',

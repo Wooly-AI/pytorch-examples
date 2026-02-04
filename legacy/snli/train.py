@@ -6,11 +6,9 @@ import torch
 import torch.optim as O
 import torch.nn as nn
 
-from torchtext.legacy import data
-from torchtext.legacy import datasets
-
 from model import SNLIClassifier
 from util import get_args, makedirs
+from data import get_data
 
 
 args = get_args()
@@ -22,30 +20,16 @@ elif torch.backends.mps.is_available():
 else:
     device = torch.device('cpu')
 
-inputs = data.Field(lower=args.lower, tokenize='spacy')
-answers = data.Field(sequential=False)
-
-train, dev, test = datasets.SNLI.splits(inputs, answers)
-
-inputs.build_vocab(train, dev, test)
-if args.word_vectors:
-    if os.path.isfile(args.vector_cache):
-        inputs.vocab.vectors = torch.load(args.vector_cache)
-    else:
-        inputs.vocab.load_vectors(args.word_vectors)
-        makedirs(os.path.dirname(args.vector_cache))
-        torch.save(inputs.vocab.vectors, args.vector_cache)
-answers.build_vocab(train)
-
-train_iter, dev_iter, test_iter = data.BucketIterator.splits(
-            (train, dev, test), batch_size=args.batch_size, device=device)
+max_train = (args.batch_size * 2) if args.dry_run else None
+max_dev = (args.batch_size * 2) if args.dry_run else None
+train_loader, dev_loader, test_loader, input_vocab, answer_vocab_size, dev_len = get_data(
+    args, max_train_examples=max_train, max_dev_examples=max_dev
+)
 
 config = args
-config.n_embed = len(inputs.vocab)
-config.d_out = len(answers.vocab)
+config.n_embed = len(input_vocab)
+config.d_out = answer_vocab_size
 config.n_cells = config.n_layers
-
-# double the number of cells for bidirectional networks
 if config.birnn:
     config.n_cells *= 2
 
@@ -53,9 +37,11 @@ if args.resume_snapshot:
     model = torch.load(args.resume_snapshot, map_location=device)
 else:
     model = SNLIClassifier(config)
-    if args.word_vectors:
-        model.embed.weight.data.copy_(inputs.vocab.vectors)
-        model.to(device)
+    if getattr(args, 'word_vectors', None) and args.word_vectors:
+        if os.path.isfile(args.vector_cache):
+            vectors = torch.load(args.vector_cache)
+            model.embed.weight.data.copy_(vectors)
+    model.to(device)
 
 criterion = nn.CrossEntropyLoss()
 opt = O.Adam(model.parameters(), lr=args.lr)
@@ -63,84 +49,87 @@ opt = O.Adam(model.parameters(), lr=args.lr)
 iterations = 0
 start = time.time()
 best_dev_acc = -1
-header = '  Time Epoch Iteration Progress    (%Epoch)   Loss   Dev/Loss     Accuracy  Dev/Accuracy'
-dev_log_template = ' '.join('{:>6.0f},{:>5.0f},{:>9.0f},{:>5.0f}/{:<5.0f} {:>7.0f}%,{:>8.6f},{:8.6f},{:12.4f},{:12.4f}'.split(','))
-log_template =     ' '.join('{:>6.0f},{:>5.0f},{:>9.0f},{:>5.0f}/{:<5.0f} {:>7.0f}%,{:>8.6f},{},{:12.4f},{}'.split(','))
 makedirs(args.save_path)
-print(header)
+
+
+def log_progress(epoch, iterations, batch_idx, n_batches, loss, train_acc, dev_loss=None, dev_acc=None):
+    """Print progress as Title: Value lines for easy pattern matching."""
+    pct = 100. * (1 + batch_idx) / n_batches if n_batches else 0
+    print(f"Iteration: {iterations}")
+    print(f"Epoch: {epoch}")
+    print(f"Progress: {1 + batch_idx}/{n_batches} ({pct:.0f}%)")
+    print(f"Loss: {loss:.6f}")
+    print(f"Train Accuracy: {train_acc:.4f}")
+    if dev_loss is not None:
+        print(f"Dev Loss: {dev_loss:.6f}")
+    if dev_acc is not None:
+        print(f"Dev Accuracy: {dev_acc:.4f}")
 
 for epoch in range(args.epochs):
-    train_iter.init_epoch()
     n_correct, n_total = 0, 0
-    for batch_idx, batch in enumerate(train_iter):
+    for batch_idx, batch in enumerate(train_loader):
+        batch.premise = batch.premise.to(device)
+        batch.hypothesis = batch.hypothesis.to(device)
+        batch.label = batch.label.to(device)
 
-        # switch model to training mode, clear gradient accumulators
-        model.train(); opt.zero_grad()
-
+        model.train()
+        opt.zero_grad()
         iterations += 1
 
-        # forward pass
         answer = model(batch)
-
-        # calculate accuracy of predictions in the current batch
         n_correct += (torch.max(answer, 1)[1].view(batch.label.size()) == batch.label).sum().item()
         n_total += batch.batch_size
-        train_acc = 100. * n_correct/n_total
+        train_acc = 100. * n_correct / n_total
 
-        # calculate loss of the network output with respect to training labels
         loss = criterion(answer, batch.label)
+        loss.backward()
+        opt.step()
 
-        # backpropagate and update optimizer learning rate
-        loss.backward(); opt.step()
-
-        # checkpoint model periodically
         if iterations % args.save_every == 0:
             snapshot_prefix = os.path.join(args.save_path, 'snapshot')
-            snapshot_path = snapshot_prefix + '_acc_{:.4f}_loss_{:.6f}_iter_{}_model.pt'.format(train_acc, loss.item(), iterations)
+            snapshot_path = snapshot_prefix + '_acc_{:.4f}_loss_{:.6f}_iter_{}_model.pt'.format(
+                train_acc, loss.item(), iterations
+            )
             torch.save(model, snapshot_path)
             for f in glob.glob(snapshot_prefix + '*'):
                 if f != snapshot_path:
                     os.remove(f)
 
-        # evaluate performance on validation set periodically
         if iterations % args.dev_every == 0:
-
-            # switch model to evaluation mode
-            model.eval(); dev_iter.init_epoch()
-
-            # calculate accuracy on validation set
-            n_dev_correct, dev_loss = 0, 0
+            model.eval()
+            n_dev_correct, dev_loss_sum = 0, 0.0
             with torch.no_grad():
-                for dev_batch_idx, dev_batch in enumerate(dev_iter):
-                     answer = model(dev_batch)
-                     n_dev_correct += (torch.max(answer, 1)[1].view(dev_batch.label.size()) == dev_batch.label).sum().item()
-                     dev_loss = criterion(answer, dev_batch.label)
-            dev_acc = 100. * n_dev_correct / len(dev)
+                for dev_batch in dev_loader:
+                    dev_batch.premise = dev_batch.premise.to(device)
+                    dev_batch.hypothesis = dev_batch.hypothesis.to(device)
+                    dev_batch.label = dev_batch.label.to(device)
+                    answer = model(dev_batch)
+                    n_dev_correct += (
+                        torch.max(answer, 1)[1].view(dev_batch.label.size()) == dev_batch.label
+                    ).sum().item()
+                    dev_loss_sum += criterion(answer, dev_batch.label).item()
+            dev_acc = 100. * n_dev_correct / dev_len
+            dev_loss_val = dev_loss_sum / max(len(dev_loader), 1)
 
-            print(dev_log_template.format(time.time()-start,
-                epoch, iterations, 1+batch_idx, len(train_iter),
-                100. * (1+batch_idx) / len(train_iter), loss.item(), dev_loss.item(), train_acc, dev_acc))
+            log_progress(epoch, iterations, batch_idx, len(train_loader), loss.item(),
+                         train_acc, dev_loss=dev_loss_val, dev_acc=dev_acc)
 
-            # update best validation set accuracy
             if dev_acc > best_dev_acc:
-
-                # found a model with better validation set accuracy
-
                 best_dev_acc = dev_acc
                 snapshot_prefix = os.path.join(args.save_path, 'best_snapshot')
-                snapshot_path = snapshot_prefix + '_devacc_{}_devloss_{}__iter_{}_model.pt'.format(dev_acc, dev_loss.item(), iterations)
-
-                # save model, delete previous 'best_snapshot' files
+                snapshot_path = snapshot_prefix + '_devacc_{}_devloss_{}__iter_{}_model.pt'.format(
+                    dev_acc, dev_loss_val, iterations
+                )
                 torch.save(model, snapshot_path)
                 for f in glob.glob(snapshot_prefix + '*'):
                     if f != snapshot_path:
                         os.remove(f)
 
         elif iterations % args.log_every == 0:
-
-            # print progress message
-            print(log_template.format(time.time()-start,
-                epoch, iterations, 1+batch_idx, len(train_iter),
-                100. * (1+batch_idx) / len(train_iter), loss.item(), ' '*8, n_correct/n_total*100, ' '*12))
+            log_progress(epoch, iterations, batch_idx, len(train_loader), loss.item(), train_acc)
         if args.dry_run:
+            if iterations % args.log_every != 0 and iterations % args.dev_every != 0:
+                log_progress(epoch, iterations, batch_idx, len(train_loader), loss.item(), train_acc)
             break
+    if args.dry_run:
+        break
