@@ -46,7 +46,7 @@ class Multi30kDataset(Dataset):
         "valid": "https://raw.githubusercontent.com/neychev/small_DL_repo/master/datasets/Multi30k/validation.tar.gz",
     }
     
-    def __init__(self, split, language_pair, root=".data"):
+    def __init__(self, split, language_pair, root="/tmp/.data"):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True)
         self.src_lang, self.tgt_lang = language_pair
