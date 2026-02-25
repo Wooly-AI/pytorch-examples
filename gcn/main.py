@@ -1,7 +1,12 @@
 import os
+import sys
 import time
 import requests
 import tarfile
+
+# Allow importing shared common module from pytorch-examples root
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from common.download_retry import download_with_retries
 import numpy as np
 import argparse
 
@@ -234,7 +239,7 @@ if __name__ == '__main__':
 
     cora_url = 'https://linqs-data.soe.ucsc.edu/public/lbc/cora.tgz'
     print('Downloading dataset...')
-    with requests.get(cora_url, stream=True) as tgz_file:
+    with download_with_retries(cora_url, stream=True) as tgz_file:
         with tarfile.open(fileobj=tgz_file.raw, mode='r:gz') as tgz_object:
             tgz_object.extractall('/tmp')
 
